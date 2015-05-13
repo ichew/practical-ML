@@ -1,0 +1,192 @@
+---
+title: "Practical Machine Learning Project"
+output:
+  html_document:
+    keep_md: yes
+---
+
+## SYNOPSIS
+
+From http://groupware.les.inf.puc-rio.br/har
+
+I read that the data are collected from accelerometers on the belt, forearm, arm and dumbell of 6 male health participants (aged between 20-28 years, with little weight lifting experience).
+
+Each participant were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+
+They were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+In this report, I will attempt to predict the type in which the exercise was done (the classe variable) based on the features extracted from the accelerometers.
+
+## DATA PROCESSING
+
+The training data for this project are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+I will assume these 2 files are downloaded and placed in the working directory.
+
+The working directory used here is set as below R code (ie "C:/predmachlearn" ).
+
+```{r}
+# set Global options
+options(warn=-1)
+
+library(knitr)
+library(ggplot2)
+library(lattice)
+library(caret)
+library(e1071)
+
+opts_chunk$set(cache=TRUE)
+
+# set working directory
+setwd("C:/predmachlearn")
+```
+
+Extract and load the raw data into the respective dataframes.
+
+```{r}
+# read the raw data file and setting the NA strings accordingly
+rawTrain <- read.csv("pml-training.csv", header=TRUE, na.strings=c("NA","","#DIV/0!") )
+rawTest <- read.csv("pml-testing.csv", header=TRUE, na.strings=c("NA","","#DIV/0!") )
+```
+
+A quick study on rawTrain revealed __19622 observations, consisting of 160 variables.__
+Let us work to remove the data that are not important for use in predicting.
+
+I will use __caret's nearZeroVar__ function to identify predictors that have one unique value or predictors that have both of the following characteristics: 
+
+(1) they have very few unique values relative to the number of samples and 
+
+(2) the ratio of the frequency of the most common value to the frequency of the second most common value is large.
+
+```{r}
+nzv_cols <- nearZeroVar(rawTrain[, -160])
+if(length(nzv_cols) > 0) {
+  # removing near zero variance predictors
+  data_train <- rawTrain[, -nzv_cols]
+  data_test  <- rawTest[, -nzv_cols]
+}
+```
+
+Next, I remove columns whose values are all NAs.
+
+Also, I will remove the first 5 columns as they are names and time-stamp information that will not be used.
+
+```{r}
+# remove first 5 columns as they are not used
+data_train <- data_train[, -c(1:5)]
+data_test <- data_test[, -c(1:5)]
+
+# remove columns with all NAs
+columns_all_NAs <- colSums(is.na(data_train)) > 0
+data_train <- data_train[, !columns_all_NAs]
+data_test <- data_test[, !columns_all_NAs]
+
+# Show the remaining columns.
+colnames(data_train)
+```
+
+From 160 variables, I have reduced the variables to __53__ (excluding classe variable). 
+I will use these 53 variables as predictors of the manner in which they did the exercise (classe variable).
+  
+## MODEL SELECTION, CROSS VALIDATION AND OUT OF SAMPLE ERROR
+
+Let us recap the approach for Cross-Validation and what is Out of Sample Error:
+
+__Cross Validation Approach:__
+
+1) Use the training set
+
+2) Split it into training/test sets
+
+3) Build a model on the training set 
+
+4) Evaluate on the test set
+
+5) Repeat and average the estimated errors
+
+__Out of Sample Error__ is the error rate you get on a new data set. Sometimes called generalization error.
+
+__Model Selection__
+
+From week 2 lecture, we read that Random Forests are highly accurate for this type of classification problem. 
+And to answer the question of what I expect the out of sample error to be and to estimate the error appropriately with cross-validation, I will use the __caret package with Random Forest as my model and will do a 3 fold cross validation.__
+(I understand that usually we will be doing 5 or 10 fold cross validation. But the running time for 5-fold on my PC is too long. Hence I adopted 3 folds cross validation)
+
+First, I did a 70-30 split on the training data. I will be using the 70% to train the model and later use the 30% for testing.
+
+```{r}
+set.seed(123)
+
+# Split training set into training/test sets
+in_train <- createDataPartition(y=data_train$classe, p=0.7, list=FALSE)
+training <- data_train[in_train, ]
+testing <- data_train[-in_train, ]
+```
+
+Next, I train my Random Forest model using the caret package's Train function.
+The cross validation is set in the trainControl function.
+
+```{r}
+# Train a random forest model using the training set 
+modFit <- train(classe ~ ., data=training, method="rf", 
+                trControl=trainControl(method="cv", number=3), # with 3 fold cross validation
+                allowParallel=TRUE
+                )
+```
+
+```{r}
+print(modFit)
+
+print(modFit$finalModel)
+
+```
+
+Let us now test by using this to predict the 30% testing data we had segregated from the training dataset.
+
+```{r}
+pred <- predict(modFit, testing)
+
+confusionMatrix(pred, testing$classe)
+```
+
+The accuracy of the model is 99.8%. The out of sample error is 0.2%.
+
+With such a high accuracy and low out of sample error, I will not be running other models. But will be using this model on the 20 test cases ("pml-testing.csv").
+
+```{r}
+# using the model on the 20 test cases
+submit20testcases <- predict(modFit,data_test)
+submit20testcases
+```
+
+```{r eval=FALSE}
+# function for writing the output files
+pml_write_files = function(x) {
+    n = length(x)
+    for (i in 1:n) {
+        filename = paste0("problem_id_", i, ".txt")
+        write.table(x[i], file = filename, quote = FALSE, row.names = FALSE, 
+            col.names = FALSE)
+    }
+}
+
+# write the predictons generated in the previsou step into files.
+pml_write_files(submit20testcases)
+```
+
+## SUMMARY
+
+As mentioned above. the accuracy of the Random Forest model is 99.8%. The out of sample error is 0.2%.
+
+We also submitted the 20 test cases results and was graded all correct (ie 20/20).
+
+This shows the Random Forest model we created is able to predict well.
+
+Thanks for taking the time to grade my work.
+
